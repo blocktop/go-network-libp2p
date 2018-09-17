@@ -25,8 +25,8 @@ import (
 	"os"
 	"time"
 
-	boot "github.com/blckit/go-libp2p-bootstrap"
-	spec "github.com/blckit/go-spec"
+	boot "github.com/blocktop/go-libp2p-bootstrap"
+	spec "github.com/blocktop/go-spec"
 	proto "github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/google/uuid"

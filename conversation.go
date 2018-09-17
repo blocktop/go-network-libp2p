@@ -32,7 +32,7 @@ import (
 )
 
 const ConversationProtocolVersion = "0.0.1"
-const ConversationProtocol = "/blckit/conversation/" + ConversationProtocolVersion
+const ConversationProtocol = "/blocktop/conversation/" + ConversationProtocolVersion
 
 type conversation struct {
 	host          p2phost.Host
