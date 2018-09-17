@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package netlibp2p;
+
+import "google/protobuf/any.proto";
+
+message ConversationMessage {
+    string version = 5;
+    string ID = 10;
+    string protocol = 15;
+    string from = 20;
+    int64 timestamp = 25;
+    string signature = 30;
+    string pubKey = 35;
+    bool hangUp = 40;
+    google.protobuf.Any message = 45;
+}
