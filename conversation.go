@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	p2phost "github.com/libp2p/go-libp2p-host"
 	inet "github.com/libp2p/go-libp2p-net"
 	peer "github.com/libp2p/go-libp2p-peer"
@@ -84,7 +85,7 @@ func makeConversationKey(blockchainType string, toPeerID string, outbound bool) 
 	if outbound {
 		dir = "outbound"
 	}
-	return fmt.Sprintf("/%/conversation/%s/%d", blockchainType, dir, toPeerID)
+	return fmt.Sprintf("/%/conversation/%s/%d/%s", blockchainType, dir, toPeerID, uuid.New().String())
 }
 
 func (c *conversation) watchdog(ctx context.Context) {

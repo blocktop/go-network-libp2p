@@ -53,6 +53,7 @@ type NetworkNode struct {
 	privKey          crypto.PrivKey
 	pubKey           crypto.PubKey
 	receive          chan *spec.NetworkMessage
+	broadcast				 chan *spec.NetworkMessage
 }
 
 func NewNode() (*NetworkNode, error) {
@@ -81,6 +82,7 @@ func NewNode() (*NetworkNode, error) {
 	n.pubKey = pubKey
 	n.PublicKey = pubKeyStr
 	n.receive = make(chan *spec.NetworkMessage, 100)
+	n.broadcast = make(chan *spec.NetworkMessage, 100)
 
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(viper.GetStringSlice("node.addresses")...),
@@ -177,6 +179,8 @@ func (n *NetworkNode) Listen(ctx context.Context) {
 	n.Host.SetStreamHandler(ConversationProtocol, func(s inet.Stream) {
 		n.handleIncomingConversation(ctx, s)
 	})
+
+	go n.broadcastMessages(ctx)
 }
 
 func (n *NetworkNode) GetPeerID() string {
@@ -185,6 +189,10 @@ func (n *NetworkNode) GetPeerID() string {
 
 func (n *NetworkNode) GetReceiveChan() <-chan *spec.NetworkMessage {
 	return n.receive
+}
+
+func (n *NetworkNode) GetBroadcastChan() (chan<- *spec.NetworkMessage) {
+	return n.broadcast
 }
 
 func (n *NetworkNode) Close() {
@@ -197,26 +205,37 @@ func (n *NetworkNode) Close() {
 	n.Host.RemoveStreamHandler(ConversationProtocol)
 }
 
-func (n *NetworkNode) Broadcast(ctx context.Context, message proto.Message, from string, p *spec.MessageProtocol) {
+func (n *NetworkNode) broadcastMessages(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case netMsg := <- n.broadcast:
+			go n.broadcastMessage(ctx, netMsg)
+		}
+	}
+}
+
+func (n *NetworkNode) broadcastMessage(ctx context.Context, netMsg *spec.NetworkMessage) {
 	peerstore := n.Host.Peerstore()
 	peers := peerstore.Peers()
 
 	for _, peer := range peers {
 		toPeerID := peer.Pretty()
-		if toPeerID != n.PeerID && toPeerID != from {
+		if toPeerID != n.PeerID && toPeerID != netMsg.From {
 			protocols, _ := peerstore.SupportsProtocols(peer, ConversationProtocol)
 			if protocols == nil || len(protocols) == 0 {
 				// TODO ensure correct protocol
 				// continue
 			}
 
-			conversationKey := makeConversationKey(p.GetBlockchainType(), toPeerID, true)
+			conversationKey := makeConversationKey(netMsg.Protocol.GetBlockchainType(), toPeerID, true)
 			c, err := getConversation(ctx, n.Host, conversationKey, toPeerID, nil)
 			if err != nil {
 				continue
 			}
 
-			msg, err := n.makeConversationMessage(p.String(), from, message)
+			msg, err := n.makeConversationMessage(netMsg)
 			if err != nil {
 				break
 			}
@@ -286,14 +305,14 @@ func (n *NetworkNode) handleIncomingConversation(ctx context.Context, stream ine
 	go n.addToPeerstore(msg.GetFrom(), msg.GetPubKey())
 }
 
-func (n *NetworkNode) makeConversationMessage(protocol string, from string, message proto.Message) (*ConversationMessage, error) {
-	a, err := ptypes.MarshalAny(message)
+func (n *NetworkNode) makeConversationMessage(netMsg *spec.NetworkMessage) (*ConversationMessage, error) {
+	a, err := ptypes.MarshalAny(netMsg.Message)
 
 	conversationMsg := &ConversationMessage{
 		ID:        uuid.New().String(),
 		Version:   ConversationProtocolVersion,
-		Protocol:  protocol,
-		From:      from,
+		Protocol:  netMsg.Protocol.String(),
+		From:      netMsg.From,
 		Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
 		PubKey:    n.PublicKey,
 		HangUp:    true,
