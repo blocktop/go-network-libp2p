@@ -25,10 +25,13 @@ import (
 	"os"
 	"time"
 
+	push "github.com/blocktop/go-push-components"
+	"github.com/fatih/color"
+	"github.com/golang/glog"
+
 	boot "github.com/blocktop/go-libp2p-bootstrap"
 	spec "github.com/blocktop/go-spec"
 	proto "github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/google/uuid"
 	libp2p "github.com/libp2p/go-libp2p"
 	crypto "github.com/libp2p/go-libp2p-crypto"
@@ -42,24 +45,28 @@ import (
 	"github.com/spf13/viper"
 )
 
+var _ spec.NetworkNode = (*NetworkNode)(nil)
+
 type NetworkNode struct {
-	PeerID           string
-	PublicKey        string
-	Host             p2phost.Host
-	Bootstrapper     *boot.Bootstrap
-	DiscoveryService discovery.Service
-	identity         peer.ID
-	addresses        []ma.Multiaddr
-	privKey          crypto.PrivKey
-	pubKey           crypto.PubKey
-	receive          chan *spec.NetworkMessage
-	broadcast				 chan *spec.NetworkMessage
+	peerID            string
+	PublicKey         string
+	PrivateKey        string
+	Host              p2phost.Host
+	Bootstrapper      *boot.Bootstrap
+	DiscoveryService  discovery.Service
+	identity          peer.ID
+	addresses         []ma.Multiaddr
+	privKey           crypto.PrivKey
+	pubKey            crypto.PubKey
+	broadcastQ        *push.PushQueue
+	onMessageReceived spec.MessageReceivedHandler
 }
 
 func NewNode() (*NetworkNode, error) {
 	n := &NetworkNode{}
 
-	privKeyBytes, err := crypto.ConfigDecodeKey(viper.GetString("node.privateKey"))
+	privKeyStr := viper.GetString("node.privateKey")
+	privKeyBytes, err := crypto.ConfigDecodeKey(privKeyStr)
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +88,7 @@ func NewNode() (*NetworkNode, error) {
 	n.privKey = privKey
 	n.pubKey = pubKey
 	n.PublicKey = pubKeyStr
-	n.receive = make(chan *spec.NetworkMessage, 100)
-	n.broadcast = make(chan *spec.NetworkMessage, 100)
+	n.PrivateKey = privKeyStr
 
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(viper.GetStringSlice("node.addresses")...),
@@ -96,7 +102,7 @@ func NewNode() (*NetworkNode, error) {
 	n.Host = host
 
 	n.identity = host.ID()
-	n.PeerID = n.identity.Pretty()
+	n.peerID = n.identity.Pretty()
 	n.Host.Peerstore().SetProtocols(n.identity, ConversationProtocol)
 
 	if !viper.GetBool("node.bootstrapper.disable") {
@@ -106,6 +112,19 @@ func NewNode() (*NetworkNode, error) {
 		}
 		n.Bootstrapper = bs
 	}
+
+	broadcastConcurrency := viper.GetInt("node.broadcastconcurrency")
+	n.broadcastQ = push.NewPushQueue(broadcastConcurrency, 1000, func(item push.QueueItem) {
+		if netMsg, ok := item.(*spec.NetworkMessage); ok {
+			n.broadcastMessage(netMsg)
+		} else {
+			glog.Warningln("Peer %s: broadcaster received incorrect item from queue", n.peerID[2:6])
+		}
+	})
+	n.broadcastQ.OnOverload(func(item push.QueueItem) {
+		glog.Errorln(color.HiRedString("Peer %s: broadcast queue was overloaded", n.peerID[2:6]))
+	})
+	n.broadcastQ.Start()
 
 	return n, nil
 }
@@ -151,7 +170,7 @@ func (n *NetworkNode) Bootstrap(ctx context.Context) error {
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "Peer %s: Bootstrapping...\n", n.PeerID[2:8])
+	fmt.Fprintf(os.Stderr, "Peer %s: Bootstrapping...\n", n.peerID[2:8])
 	err := n.Bootstrapper.Start(ctx)
 	if err != nil {
 		return err
@@ -179,20 +198,18 @@ func (n *NetworkNode) Listen(ctx context.Context) {
 	n.Host.SetStreamHandler(ConversationProtocol, func(s inet.Stream) {
 		n.handleIncomingConversation(ctx, s)
 	})
-
-	go n.broadcastMessages(ctx)
 }
 
-func (n *NetworkNode) GetPeerID() string {
-	return n.PeerID
+func (n *NetworkNode) PeerID() string {
+	return n.peerID
 }
 
-func (n *NetworkNode) GetReceiveChan() <-chan *spec.NetworkMessage {
-	return n.receive
+func (n *NetworkNode) OnMessageReceived(f spec.MessageReceivedHandler) {
+	n.onMessageReceived = f
 }
 
-func (n *NetworkNode) GetBroadcastChan() (chan<- *spec.NetworkMessage) {
-	return n.broadcast
+func (n *NetworkNode) Broadcast(netMsg *spec.NetworkMessage) {
+	n.broadcastQ.Put(netMsg)
 }
 
 func (n *NetworkNode) Close() {
@@ -205,24 +222,13 @@ func (n *NetworkNode) Close() {
 	n.Host.RemoveStreamHandler(ConversationProtocol)
 }
 
-func (n *NetworkNode) broadcastMessages(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case netMsg := <- n.broadcast:
-			go n.broadcastMessage(ctx, netMsg)
-		}
-	}
-}
-
-func (n *NetworkNode) broadcastMessage(ctx context.Context, netMsg *spec.NetworkMessage) {
+func (n *NetworkNode) broadcastMessage(netMsg *spec.NetworkMessage) {
 	peerstore := n.Host.Peerstore()
 	peers := peerstore.Peers()
 
 	for _, peer := range peers {
 		toPeerID := peer.Pretty()
-		if toPeerID != n.PeerID && toPeerID != netMsg.From {
+		if toPeerID != n.peerID && toPeerID != netMsg.From {
 			protocols, _ := peerstore.SupportsProtocols(peer, ConversationProtocol)
 			if protocols == nil || len(protocols) == 0 {
 				// TODO ensure correct protocol
@@ -230,6 +236,7 @@ func (n *NetworkNode) broadcastMessage(ctx context.Context, netMsg *spec.Network
 			}
 
 			conversationKey := makeConversationKey(netMsg.Protocol.GetBlockchainType(), toPeerID, true)
+			ctx := context.TODO()
 			c, err := getConversation(ctx, n.Host, conversationKey, toPeerID, nil)
 			if err != nil {
 				continue
@@ -240,11 +247,13 @@ func (n *NetworkNode) broadcastMessage(ctx context.Context, netMsg *spec.Network
 				break
 			}
 
-			c.send(ctx, msg)
+			go func() {
+				c.send(ctx, msg)
 
-			if msg.GetHangUp() {
-				c.end()
-			}
+				if msg.GetHangUp() {
+					c.end()
+				}
+			}()
 		}
 	}
 }
@@ -296,27 +305,29 @@ func (n *NetworkNode) handleIncomingConversation(ctx context.Context, stream ine
 	p := spec.NewProtocol(msg.GetProtocol())
 
 	netMsg := &spec.NetworkMessage{
-		Message:  msg.GetMessage(),
+		Data:     msg.GetData(),
+		Links:    msg.GetLinks(),
+		Hash:			msg.GetHash(),
 		Protocol: p,
 		From:     msg.GetFrom()}
 
-	n.receive <- netMsg
+	n.onMessageReceived(netMsg)
 
-	go n.addToPeerstore(msg.GetFrom(), msg.GetPubKey())
+	//go n.addToPeerstore(msg.GetFrom(), msg.GetPubKey())
 }
 
 func (n *NetworkNode) makeConversationMessage(netMsg *spec.NetworkMessage) (*ConversationMessage, error) {
-	a, err := ptypes.MarshalAny(netMsg.Message)
-
 	conversationMsg := &ConversationMessage{
 		ID:        uuid.New().String(),
 		Version:   ConversationProtocolVersion,
 		Protocol:  netMsg.Protocol.String(),
 		From:      netMsg.From,
 		Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
+		Hash:      netMsg.Hash,
 		PubKey:    n.PublicKey,
 		HangUp:    true,
-		Message:   a}
+		Data:      netMsg.Data,
+		Links:     netMsg.Links}
 
 	msgBytes, err := proto.Marshal(conversationMsg)
 	if err != nil {
