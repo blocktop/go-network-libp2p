@@ -132,9 +132,9 @@ func NewNode() (*NetworkNode, error) {
 func (n *NetworkNode) makeBootstrapper() (*boot.Bootstrap, error) {
 	bootCfg := boot.Config{}
 	bootCfg.MinPeers = viper.GetInt("node.bootstrapper.minPeers")
-	bootCfg.BootstrapPeers = viper.GetStringSlice("node.bootstrapper.bootstrapPeers")
+	bootCfg.BootstrapPeers = viper.GetStringSlice("node.bootstrapper.peers")
 	bootCfg.BootstrapInterval = viper.GetDuration("node.bootstrapper.checkInterval") * time.Second
-	bootCfg.HardBootstrap = viper.GetDuration("node.bootstrapper.rebootstrapIntervale") * time.Second
+	bootCfg.HardBootstrap = viper.GetDuration("node.bootstrapper.rebootstrapInterval") * time.Second
 
 	bs, err := boot.New(n.Host, bootCfg)
 	if err != nil {
