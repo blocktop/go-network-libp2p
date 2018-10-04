@@ -176,7 +176,7 @@ func (n *NetworkNode) Bootstrap(ctx context.Context) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	minPeers := n.Bootstrapper.GetMinPeers()
