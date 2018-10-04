@@ -307,13 +307,13 @@ func (n *NetworkNode) handleIncomingConversation(ctx context.Context, stream ine
 	netMsg := &spec.NetworkMessage{
 		Data:     msg.GetData(),
 		Links:    msg.GetLinks(),
-		Hash:			msg.GetHash(),
+		Hash:     msg.GetHash(),
 		Protocol: p,
 		From:     msg.GetFrom()}
 
 	n.onMessageReceived(netMsg)
 
-	//go n.addToPeerstore(msg.GetFrom(), msg.GetPubKey())
+	go n.addToPeerstore(msg.GetFrom(), msg.GetPubKey())
 }
 
 func (n *NetworkNode) makeConversationMessage(netMsg *spec.NetworkMessage) (*ConversationMessage, error) {
