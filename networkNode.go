@@ -59,7 +59,7 @@ type NetworkNode struct {
 	privKey           crypto.PrivKey
 	pubKey            crypto.PubKey
 	broadcastQ        *push.PushQueue
-	onMessageReceived spec.MessageReceivedHandler
+	onMessageReceived spec.MessageReceiver
 }
 
 func NewNode() (*NetworkNode, error) {
@@ -114,14 +114,14 @@ func NewNode() (*NetworkNode, error) {
 	}
 
 	broadcastConcurrency := viper.GetInt("node.broadcastconcurrency")
-	n.broadcastQ = push.NewPushQueue(broadcastConcurrency, 1000, func(item push.QueueItem) {
+	n.broadcastQ = push.NewPushQueue(broadcastConcurrency, 1000, func(item interface{}) {
 		if netMsg, ok := item.(*spec.NetworkMessage); ok {
 			n.broadcastMessage(netMsg)
 		} else {
-			glog.Warningln("Peer %s: broadcaster received incorrect item from queue", n.peerID[2:6])
+			glog.Warningf("Peer %s: broadcaster received incorrect item from queue", n.peerID[2:6])
 		}
 	})
-	n.broadcastQ.OnOverload(func(item push.QueueItem) {
+	n.broadcastQ.OnOverload(func(item interface{}) {
 		glog.Errorln(color.HiRedString("Peer %s: broadcast queue was overloaded", n.peerID[2:6]))
 	})
 	n.broadcastQ.Start()
@@ -204,12 +204,14 @@ func (n *NetworkNode) PeerID() string {
 	return n.peerID
 }
 
-func (n *NetworkNode) OnMessageReceived(f spec.MessageReceivedHandler) {
+func (n *NetworkNode) OnMessageReceived(f spec.MessageReceiver) {
 	n.onMessageReceived = f
 }
 
-func (n *NetworkNode) Broadcast(netMsg *spec.NetworkMessage) {
-	n.broadcastQ.Put(netMsg)
+func (n *NetworkNode) Broadcast(netMsgs []*spec.NetworkMessage) {
+	for _, m := range netMsgs {
+		n.broadcastQ.Put(m)
+	}
 }
 
 func (n *NetworkNode) Close() {
@@ -235,7 +237,7 @@ func (n *NetworkNode) broadcastMessage(netMsg *spec.NetworkMessage) {
 				// continue
 			}
 
-			conversationKey := makeConversationKey(netMsg.Protocol.GetBlockchainType(), toPeerID, true)
+			conversationKey := makeConversationKey(netMsg.Protocol.BlockchainName(), toPeerID, true)
 			ctx := context.TODO()
 			c, err := getConversation(ctx, n.Host, conversationKey, toPeerID, nil)
 			if err != nil {
