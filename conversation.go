@@ -85,7 +85,7 @@ func makeConversationKey(blockchainType string, toPeerID string, outbound bool) 
 	if outbound {
 		dir = "outbound"
 	}
-	return fmt.Sprintf("/%/conversation/%s/%d/%s", blockchainType, dir, toPeerID, uuid.New().String())
+	return fmt.Sprintf("/%s/conversation/%s/%d/%s", blockchainType, dir, toPeerID, uuid.New().String())
 }
 
 func (c *conversation) watchdog(ctx context.Context) {
