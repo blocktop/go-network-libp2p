@@ -37,7 +37,7 @@ import (
 	crypto "github.com/libp2p/go-libp2p-crypto"
 	p2phost "github.com/libp2p/go-libp2p-host"
 	inet "github.com/libp2p/go-libp2p-net"
-	peer "github.com/libp2p/go-libp2p-peer"
+	libp2peer "github.com/libp2p/go-libp2p-peer"
 	pstore "github.com/libp2p/go-libp2p-peerstore"
 	discovery "github.com/libp2p/go-libp2p/p2p/discovery"
 	ma "github.com/multiformats/go-multiaddr"
@@ -54,7 +54,7 @@ type NetworkNode struct {
 	Host              p2phost.Host
 	Bootstrapper      *boot.Bootstrap
 	DiscoveryService  discovery.Service
-	identity          peer.ID
+	identity          libp2peer.ID
 	addresses         []ma.Multiaddr
 	privKey           crypto.PrivKey
 	pubKey            crypto.PubKey
@@ -118,11 +118,11 @@ func NewNode() (*NetworkNode, error) {
 		if netMsg, ok := item.(*spec.NetworkMessage); ok {
 			n.broadcastMessage(netMsg)
 		} else {
-			glog.Warningf("Peer %s: broadcaster received incorrect item from queue", n.peerID[2:6])
+			glog.Warningln("Broadcaster received incorrect item from queue")
 		}
 	})
 	n.broadcastQ.OnOverload(func(item interface{}) {
-		glog.Errorln(color.HiRedString("Peer %s: broadcast queue was overloaded", n.peerID[2:6]))
+		glog.Errorln(color.HiRedString("Broadcast queue was overloaded"))
 	})
 	n.broadcastQ.Start()
 
@@ -170,7 +170,7 @@ func (n *NetworkNode) Bootstrap(ctx context.Context) error {
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "Peer %s: Bootstrapping...\n", n.peerID[2:8])
+	fmt.Fprintln(os.Stderr, "Bootstrapping...\n")
 	err := n.Bootstrapper.Start(ctx)
 	if err != nil {
 		return err
